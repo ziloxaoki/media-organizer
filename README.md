@@ -111,6 +111,8 @@ services:
       - /mnt/tank/tmm-config:/config
     ports:
       - "4000:4000"
+      - "5800:5800"
+      - "5900:5900"
 
   tmm-scheduler:
     image: alpine:latest
