@@ -81,6 +81,8 @@ services:
   media-organizer:
     image: ghcr.io/ziloxaoki/media-organizer/media-organizer:latest
     user: "568:568"
+    group_add:
+      - "999"
     container_name: media-organizer
     restart: unless-stopped
 

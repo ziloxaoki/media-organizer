@@ -40,11 +40,23 @@ tv_api = TV()
 # CACHE
 # =========================
 
-if os.path.exists(CACHE_FILE):
-    with open(CACHE_FILE, "r") as f:
-        cache = json.load(f)
-else:
-    cache = {}
+def load_cache():
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            print("⚠️ Cache file corrupted. Resetting to empty cache.")
+            try:
+                with open(CACHE_FILE, "w") as f:
+                    json.dump({}, f)
+            except Exception as e:
+                print(f"❌ Failed to reset cache file: {e}")
+            return {}
+    else:
+        return {}
+
+cache = load_cache()
 
 def save_cache():
     with open(CACHE_FILE, "w") as f:
@@ -66,12 +78,6 @@ def already_processed(path):
 def mark_processed(path):
     cache[path] = True
     save_cache()
-
-def run_move(src, dest):
-    if DRY_RUN:
-        print(f"[DRY RUN] Would move: {src} -> {dest}")
-    else:
-        shutil.move(src, dest)
 
 # =========================
 # TMM TRIGGER
@@ -109,19 +115,20 @@ def process_movie(filepath, info):
     movie = results[0]
     year = movie.release_date[:4] if movie.release_date else "Unknown"
 
-    print(f"Movie details found: {movie.title} ({year}")
-
     folder_name = f"{movie.title} ({year})"
     new_filename = f"{movie.title} ({year}){os.path.splitext(filepath)[1]}"
 
     dest_folder = os.path.join(MOVIES_DIR, folder_name)
-    os.makedirs(dest_folder, exist_ok=True)
-
     dest_path = os.path.join(dest_folder, new_filename)
 
-    run_move(filepath, dest_path)
-    print(f"🎬 Moved: {dest_path}")
+    if DRY_RUN:
+        print(f"[DRY RUN] Would move: {filepath} -> {dest_path}")
+        return False
 
+    os.makedirs(dest_folder, exist_ok=True)
+    shutil.move(filepath, dest_path)
+
+    print(f"🎬 Moved: {dest_path}")
     return True
 
 # =========================
@@ -143,12 +150,16 @@ def process_tv(filepath, info):
     print(f"TV Show details found: {show.name}")
 
     folder = os.path.join(TV_DIR, show.name, f"Season {season:02d}")
-    os.makedirs(folder, exist_ok=True)
 
     new_filename = f"{show.name} S{season:02d}E{episode:02d}{os.path.splitext(filepath)[1]}"
     dest_path = os.path.join(folder, new_filename)
 
-    run_move(filepath, dest_path)
+    if DRY_RUN:
+        print(f"[DRY RUN] Would move: {filepath} -> {dest_path}")
+        return False
+
+    os.makedirs(folder, exist_ok=True)
+    shutil.move(filepath, dest_path)
     print(f"📺 Moved: {dest_path}")
 
     return True
@@ -158,18 +169,23 @@ def process_tv(filepath, info):
 # =========================
 
 def process_file(filepath):
-    if already_processed(filepath):
-        return False
+    print(f"DEBUG: checking {filepath}")
 
-    print(f"Found file: {filepath}")
+    if already_processed(filepath):
+        print("SKIP: already processed")
+        return False
 
     filename = os.path.basename(filepath)
 
     if is_incomplete(filename):
+        print("SKIP: incomplete file")
         return False
 
     if not is_video(filename):
+        print(f"SKIP: not a video ({filename})")
         return False
+
+    print("PASS: file accepted")
 
     info = guessit(filename)
 
@@ -206,13 +222,16 @@ def scan_and_process():
 
     for root, dirs, files in os.walk(INPUT_DIR):
         # Remove excluded directories from traversal
-        dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
+        for root, dirs, files in os.walk(INPUT_DIR):
+            # Skip any path containing excluded dirs
+            if any(excluded in root.lower() for excluded in EXCLUDED_DIRS):
+                continue
 
-        for file in files:
-            full_path = os.path.join(root, file)
+            for file in files:
+                full_path = os.path.join(root, file)
 
-            if process_file(full_path):
-                moved_any = True
+                if process_file(full_path):
+                    moved_any = True
 
     return moved_any
 
