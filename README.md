@@ -62,7 +62,7 @@ SCAN_INTERVAL=300
 ## 1. Build and run
 
 ```bash
-
+1. Deploy
 docker compose up -d
 2. Stop
 docker compose down
