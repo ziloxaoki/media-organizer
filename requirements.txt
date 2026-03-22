@@ -1,0 +1,4 @@
+guessit
+tmdbv3api
+requests
+python-dateutil
