@@ -27,8 +27,7 @@ DEBOUNCE_SECONDS = int(os.getenv("DEBOUNCE_SECONDS", "10"))
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov")
 EXCLUDED_DIRS = {"tmp", ".tmp", "incomplete"}
 # Replace invalid Windows filename characters
-INVALID_WIN_CHARS = r'<>:"/\|?*'
-INVALID_RE = re.compile(f"[{re.escape(INVALID_WIN_CHARS)}]")
+WINDOWS_ILLEGAL = r'[<>:"/\\|?*\n\r\t]'
 
 # =========================
 # TMDB SETUP
@@ -108,12 +107,23 @@ def trigger_tmm():
 # =========================
 # FILENAME SANITIZER
 # =========================
-def sanitize_name(name: str) -> str:
-    # Replace invalid chars with safe alternative, e.g. dash
-    sanitized = INVALID_RE.sub("-", name)
-    # Remove leading/trailing whitespace
-    sanitized = sanitized.strip()
-    return sanitized
+def truncate_name(name, max_length=100):
+    if len(name) > max_length:
+        return name[:max_length].rstrip()
+    return name
+
+def sanitize_windows_name(name, fallback="Unknown", max_length=100):
+    # Remove illegal Windows chars
+    name = re.sub(WINDOWS_ILLEGAL, '', name)
+    # Collapse spaces
+    name = re.sub(r'\s+', ' ', name).strip()
+    # Fallback if empty
+    if not name:
+        name = fallback
+    # Truncate
+    if len(name) > max_length:
+        name = name[:max_length].rstrip()
+    return name
 
 # =========================
 # PROCESS MOVIE
@@ -130,11 +140,10 @@ def process_movie(filepath, info):
     movie = results[0]
     year = movie.release_date[:4] if movie.release_date else "Unknown"
 
+    # Movie folder & filename
     folder_name = f"{movie.title} ({year})"
-    folder_name = sanitize_name(folder_name)
-
-    new_filename = f"{movie.title} ({year}){os.path.splitext(filepath)[1]}"
-    new_filename = sanitize_name(new_filename)
+    folder_name = sanitize_windows_name(folder_name, fallback=f"Movie_{year}")
+    new_filename = sanitize_windows_name(f"{movie.title} ({year}){os.path.splitext(filepath)[1]}", fallback=f"{movie.title}_{year}.mkv")
 
     dest_folder = os.path.join(MOVIES_DIR, folder_name)
     dest_path = os.path.join(dest_folder, new_filename)
@@ -170,8 +179,15 @@ def process_tv(filepath, info):
 
     print(f"TV Show details found: {show.name}")
 
-    folder = os.path.join(TV_DIR, sanitize_name(show.name), f"Season {season:02d}")
-    new_filename = sanitize_name(f"{show.name} S{season:02d}E{episode:02d}{os.path.splitext(filepath)[1]}")
+    season_folder = f"Season {season:02d}"
+    season_folder = sanitize_windows_name(season_folder)
+    show_name = sanitize_windows_name(show.name, fallback="UnknownShow")
+    folder = os.path.join(TV_DIR, show_name, season_folder)
+
+    new_filename = sanitize_windows_name(
+        f"{show.name} S{season:02d}E{episode:02d}{os.path.splitext(filepath)[1]}",
+        fallback=f"{show.name}_S{season:02d}E{episode:02d}.mkv"
+    )
     dest_path = os.path.join(folder, new_filename)
 
     if DRY_RUN:
