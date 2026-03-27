@@ -3,6 +3,7 @@ import shutil
 import time
 import json
 import subprocess
+import argparse
 from guessit import guessit
 from tmdbv3api import TMDb, Movie, TV
 
@@ -235,24 +236,133 @@ def scan_and_process():
 
     return moved_any
 
+
+# =========================
+# RENAME WITHOUT MOVING
+# =========================
+def rename_file(filepath, info):
+    filename = os.path.basename(filepath)
+    ext = os.path.splitext(filename)[1]
+
+    if info.get("type") == "movie":
+        title = info.get("title")
+
+        results = movie_api.search(title)
+        if not results:
+            print(f"Movie not found: {title}")
+            return
+
+        movie = results[0]
+        year = movie.release_date[:4] if movie.release_date else "Unknown"
+
+        new_name = f"{movie.title} ({year}){ext}"
+
+    elif info.get("type") == "episode":
+        title = info.get("title")
+        season = info.get("season")
+        episode = info.get("episode")
+
+        results = tv_api.search(title)
+        if not results:
+            print(f"TV not found: {title}")
+            return
+
+        show = results[0]
+
+        new_name = f"{show.name} S{season:02d}E{episode:02d}{ext}"
+
+    else:
+        print(f"Ignored: {filename}")
+        return
+
+    new_path = os.path.join(os.path.dirname(filepath), new_name)
+
+    if DRY_RUN:
+        print(f"[DRY RUN] Would rename: {filepath} -> {new_path}")
+        return
+
+    os.rename(filepath, new_path)
+    print(f"✏️ Renamed: {new_path}")
+
+
+# =========================
+# PROCESS CLI COMMAND
+# =========================
+def process_cli_path(path):
+    print(f"🔵 CLI mode: processing {path}")
+
+    for root, _, files in os.walk(path):
+        for file in files:
+            full_path = os.path.join(root, file)
+
+            if not is_video(file):
+                continue
+
+            print(f"Processing: {full_path}")
+
+            try:
+                info = guessit(file)
+                rename_file(full_path, info)
+            except Exception as e:
+                print(f"Error: {e}")
+
+
+# =========================
+# PARSE ARGUMENTS
+# =========================
+def parse_args():
+    parser = argparse.ArgumentParser(description="Media Organizer")
+
+    parser.add_argument(
+        "--path",
+        help="Path to process (CLI mode)",
+        default=None
+    )
+
+    parser.add_argument(
+        "--rename-only",
+        action="store_true",
+        help="Rename files in place (no moving)"
+    )
+
+    return parser.parse_args()
+
 # =========================
 # MAIN LOOP
 # =========================
 
 if __name__ == "__main__":
-    print("🟢 Media Organizer started")
+    args = parse_args()
 
-    while True:
-        print("🔄 Scanning...")
-
-        moved = scan_and_process()
-
-        if moved:
-            print(f"⏳ Waiting {DEBOUNCE_SECONDS}s before triggering TMM...")
-            time.sleep(DEBOUNCE_SECONDS)
-
-            trigger_tmm()
+    # CLI mode
+    if args.rename_only:
+        if args.path:
+            print(f"🔵 CLI mode: using custom path -> {args.path}")
+            process_cli_path(args.path)
         else:
-            print("No changes detected.")
+            print("🔵 CLI mode: no path provided")
+            print(f"➡️ Processing MOVIES_DIR: {MOVIES_DIR}")
+            process_cli_path(MOVIES_DIR)
 
-        time.sleep(SCAN_INTERVAL)
+            print(f"➡️ Processing TV_DIR: {TV_DIR}")
+            process_cli_path(TV_DIR)
+
+    else:
+        print("🟢 Media Organizer started")
+
+        while True:
+            print("🔄 Scanning...")
+
+            moved = scan_and_process()
+
+            if moved:
+                print(f"⏳ Waiting {DEBOUNCE_SECONDS}s before triggering TMM...")
+                time.sleep(DEBOUNCE_SECONDS)
+                trigger_tmm()
+            else:
+                print("No changes detected.")
+
+            time.sleep(SCAN_INTERVAL)
+
+
+

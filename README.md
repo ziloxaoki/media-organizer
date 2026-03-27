@@ -62,6 +62,8 @@ SCAN_INTERVAL=300
 ## 1. Build and run
 
 ```bash
+0. Build & Deploy local
+docker compose up --build -d
 1. Deploy
 docker compose up -d
 2. Stop
@@ -115,21 +117,126 @@ services:
       - "4000:4000"
       - "5800:5800"
       - "5900:5900"
+```
+🧰 CLI Mode (Rename Files In-Place)
 
-  tmm-scheduler:
-    image: alpine:latest
-    container_name: tmm-scheduler
-    depends_on:
-      - tinymediamanager
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - TZ=Australia/Sydney
-      - SLEEP_INTERVAL=3600
-    entrypoint: >
-      sh -c "INTERVAL=${SLEEP_INTERVAL:-3600};
-      while true; do
-        echo 'Running TMM update...';
-        docker exec tinymediamanager tmm -update;
-        sleep $INTERVAL;
-      done"
+In addition to automatic background scanning, Media Organizer can be used as a command-line tool to rename media files directly within any folder — without moving them.
+
+🔵 Use Case
+
+This mode is useful when you want to:
+
+Clean up existing libraries
+Standardize filenames
+Rename files inside any directory (not just /downloads)
+Preview changes safely with dry-run (docker-compose.yml)
+🚀 Usage
+python organizer.py --path /your/folder --rename-only
+
+✔ Shows what would be renamed
+❌ Does not modify files
+
+📂 What It Does
+Recursively scans the provided folder
+Detects media files using guessit
+Fetches metadata from TMDB
+Renames files using clean naming:
+🎬 Movies
+Old: Frankenstein.2025.2160p.mkv
+New: Frankenstein (2025).mkv
+
+📺 TV Shows
+Old: show.s01e01.mkv
+New: Show Name S01E01.mkv
+
+⚙️ Supported Options
+Option	Description
+--path	Target folder to process (optional)
+--rename-only	Enables CLI rename mode
+⚠️ Notes
+Only video files are processed (.mkv, .mp4, .avi, .mov)
+Files are renamed in place (no moving)
+TMDB API key must still be configured
+Cache is not used in CLI mode
+🟢 Default Mode (Daemon)
+
+If no CLI arguments are provided, the app runs in its default mode:
+
+python organizer.py
+
+
+✔ Continuously scans /downloads
+✔ Moves and organizes media
+✔ Triggers TinyMediaManager updates
+
+💡 Tip
+
+Always run with --dry-run first to verify results before applying changes.
+
+Since your script is inside a container, you don’t run:
+
+python organizer.py ...
+
+
+👉 You run it through the container.
+
+✅ Option 1 — Run CLI via docker exec (simplest)
+
+If your container is already running:
+
+docker exec -it media-organizer python /app/organizer.py --path /downloads/test --rename-only
+
+🧠 Important
+/app/organizer.py → path inside container
+/downloads/test → must be a mounted volume path, not host path
+
+Example mapping:
+
+- /mnt/tank/Downloads:/downloads
+
+
+So:
+
+Host path	Container path
+/mnt/tank/downloads/test	/downloads/test
+✅ Option 2 — One-off run (cleaner for CLI)
+
+Run a temporary container just for CLI:
+
+docker run --rm \
+-v /mnt/tank/downloads:/downloads \
+-v /mnt/apps-pool/media-organizer/config:/config \
+-e TMDB_API_KEY=your_key \
+ghcr.io/ziloxaoki/media-organizer:latest \
+python /app/organizer.py --path /downloads/test --rename-only
+
+🧪 With dry-run:
+docker run --rm \
+-v /mnt/tank/downloads:/downloads \
+-e TMDB_API_KEY=your_key \
+ghcr.io/ziloxaoki/media-organizer:latest \
+python /app/organizer.py --path /downloads/test --rename-only
+
+✅ Option 3 — Add CLI service to docker-compose (BEST UX)
+
+Add this to your docker-compose.yml:
+
+media-organizer-cli:
+image: ghcr.io/ziloxaoki/media-organizer:latest
+profiles: ["cli"]
+volumes:
+- /mnt/tank/downloads:/downloads
+- /mnt/apps-pool/media-organizer/config:/config
+environment:
+- TMDB_API_KEY=111111111
+entrypoint: ["python", "/app/organizer.py"]
+
+🚀 Then run:
+docker compose run --rm media-organizer-cli --path /downloads/test --rename-only
+
+🧠 Why Option 3 is best
+
+✔ No need to exec into running container
+✔ Clean separation (daemon vs CLI)
+✔ Reproducible
+✔ Easier to document
