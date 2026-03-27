@@ -4,6 +4,7 @@ import time
 import json
 import subprocess
 import argparse
+import re
 from guessit import guessit
 from tmdbv3api import TMDb, Movie, TV
 
@@ -25,6 +26,9 @@ DEBOUNCE_SECONDS = int(os.getenv("DEBOUNCE_SECONDS", "10"))
 
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov")
 EXCLUDED_DIRS = {"tmp", ".tmp", "incomplete"}
+# Replace invalid Windows filename characters
+INVALID_WIN_CHARS = r'<>:"/\|?*'
+INVALID_RE = re.compile(f"[{re.escape(INVALID_WIN_CHARS)}]")
 
 # =========================
 # TMDB SETUP
@@ -102,6 +106,16 @@ def trigger_tmm():
         print(f"❌ Failed to trigger TMM: {e}")
 
 # =========================
+# FILENAME SANITIZER
+# =========================
+def sanitize_name(name: str) -> str:
+    # Replace invalid chars with safe alternative, e.g. dash
+    sanitized = INVALID_RE.sub("-", name)
+    # Remove leading/trailing whitespace
+    sanitized = sanitized.strip()
+    return sanitized
+
+# =========================
 # PROCESS MOVIE
 # =========================
 
@@ -117,7 +131,10 @@ def process_movie(filepath, info):
     year = movie.release_date[:4] if movie.release_date else "Unknown"
 
     folder_name = f"{movie.title} ({year})"
+    folder_name = sanitize_name(folder_name)
+
     new_filename = f"{movie.title} ({year}){os.path.splitext(filepath)[1]}"
+    new_filename = sanitize_name(new_filename)
 
     dest_folder = os.path.join(MOVIES_DIR, folder_name)
     dest_path = os.path.join(dest_folder, new_filename)
@@ -153,9 +170,8 @@ def process_tv(filepath, info):
 
     print(f"TV Show details found: {show.name}")
 
-    folder = os.path.join(TV_DIR, show.name, f"Season {season:02d}")
-
-    new_filename = f"{show.name} S{season:02d}E{episode:02d}{os.path.splitext(filepath)[1]}"
+    folder = os.path.join(TV_DIR, sanitize_name(show.name), f"Season {season:02d}")
+    new_filename = sanitize_name(f"{show.name} S{season:02d}E{episode:02d}{os.path.splitext(filepath)[1]}")
     dest_path = os.path.join(folder, new_filename)
 
     if DRY_RUN:
