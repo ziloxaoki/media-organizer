@@ -127,7 +127,10 @@ def process_movie(filepath, info):
         return False
 
     os.makedirs(dest_folder, exist_ok=True)
-    shutil.move(filepath, dest_path)
+
+    # Copy + remove for cross-filesystem support
+    shutil.copy2(filepath, dest_path)
+    os.remove(filepath)
 
     print(f"🎬 Moved: {dest_path}")
     return True
@@ -160,9 +163,12 @@ def process_tv(filepath, info):
         return False
 
     os.makedirs(folder, exist_ok=True)
-    shutil.move(filepath, dest_path)
-    print(f"📺 Moved: {dest_path}")
 
+    # Copy + remove for cross-filesystem support
+    shutil.copy2(filepath, dest_path)
+    os.remove(filepath)
+
+    print(f"📺 Moved: {dest_path}")
     return True
 
 # =========================
