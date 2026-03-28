@@ -134,10 +134,7 @@ def trigger_tmm():
         return
     try:
         print("🚀 Triggering TinyMediaManager...")
-        subprocess.run([
-            "docker", "exec", TMM_CONTAINER,
-            "java", "-jar", "/config/tmm.jar", "-update"
-        ], check=True)
+        subprocess.run(["docker", "exec", TMM_CONTAINER, "tmm", "-update"], check=True)
         print("✅ TMM triggered successfully")
     except Exception as e:
         print(f"❌ Failed to trigger TMM: {e}")
