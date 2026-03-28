@@ -44,7 +44,7 @@ movie_api = Movie()
 tv_api = TV()
 
 # =========================
-# CACHE
+# CACHES
 # =========================
 
 def load_cache():
@@ -70,11 +70,30 @@ def save_cache():
 
 def get_cached_tmdb(title):
     key = f"tmdb::{title.lower()}"
-    return cache.get(key)
+    data = cache.get(key)
+    if not data:
+        return None
 
-def set_cached_tmdb(title, data):
+    # Convert back to minimal AsObj-like dict for processing
+    from tmdbv3api.tmdb import AsObj
+    results = []
+    for item in data:
+        results.append(AsObj(item))
+    return results
+
+def set_cached_tmdb(title, results):
+    # Convert results to JSON-serializable dicts
+    serializable = []
+    for r in results:
+        data = {}
+        for attr in ["id", "title", "name", "release_date", "first_air_date"]:
+            value = getattr(r, attr, None)
+            if value is not None:
+                data[attr] = value
+        serializable.append(data)
+
     key = f"tmdb::{title.lower()}"
-    cache[key] = data
+    cache[key] = serializable
     save_cache()
 
 # =========================
