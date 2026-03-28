@@ -170,6 +170,20 @@ def find_best_match(results, title, year=None):
     return results[0]
 
 # =========================
+# REMOVE ORIGIN FOLDER
+# =========================
+def remove_empty_parents(path, stop_at=INPUT_DIR):
+    current = os.path.dirname(path)
+    while os.path.abspath(current).startswith(os.path.abspath(stop_at)):
+        try:
+            os.rmdir(current)
+            print(f"🗑 Removed empty folder: {current}")
+        except OSError:
+            # Folder not empty or permission error
+            break
+        current = os.path.dirname(current)
+
+# =========================
 # PROCESS MOVIE
 # =========================
 
@@ -216,6 +230,7 @@ def process_movie(filepath, info):
         # 1. Copy file content only, ignore permissions
         shutil.copyfile(filepath, dest_path)
         os.remove(filepath)
+        remove_empty_parents(filepath)
         print(f"🐢 Copied + removed: {dest_path}")
 
     return True
@@ -273,6 +288,7 @@ def process_tv(filepath, info):
         # 1. Copy file content only, ignore permissions
         shutil.copyfile(filepath, dest_path)
         os.remove(filepath)
+        remove_empty_parents(filepath)
         print(f"📺 Copied + removed: {dest_path}")
 
     return True

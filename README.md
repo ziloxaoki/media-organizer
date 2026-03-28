@@ -108,7 +108,7 @@ services:
       - /mnt/tank/media/config:/config
 
   tinymediamanager:
-    image: romancin/tinymediamanager
+    image: tinymediamanager/tinymediamanager:latest
     container_name: tmm
     environment:
       - TZ=Australia/Sydney
