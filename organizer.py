@@ -7,6 +7,7 @@ import argparse
 import re
 from guessit import guessit
 from tmdbv3api import TMDb, Movie, TV
+from concurrent.futures import ThreadPoolExecutor
 
 # =========================
 # CONFIG (ENV VARS)
@@ -28,6 +29,9 @@ VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov")
 EXCLUDED_DIRS = {"tmp", ".tmp", "incomplete"}
 # Replace invalid Windows filename characters
 WINDOWS_ILLEGAL = r'[<>:"/\\|?*\n\r\t\uFF1A]'
+
+# Global cache for resolved TV folders (per show+season)
+tv_folder_cache = {}
 
 # =========================
 # TMDB SETUP
@@ -62,9 +66,22 @@ def load_cache():
 
 cache = load_cache()
 
+# =========================
+# TMDB CACHE
+# =========================
+
 def save_cache():
     with open(CACHE_FILE, "w") as f:
         json.dump(cache, f, indent=2)
+
+def get_cached_tmdb(title):
+    key = f"tmdb::{title.lower()}"
+    return cache.get(key)
+
+def set_cached_tmdb(title, data):
+    key = f"tmdb::{title.lower()}"
+    cache[key] = data
+    save_cache()
 
 # =========================
 # HELPERS
@@ -176,7 +193,13 @@ def process_movie(filepath, info):
         print(f"❌ No title detected for: {filepath}")
         return False
 
-    results = movie_api.search(title)
+    cached = get_cached_tmdb(title)
+
+    if cached:
+        results = cached
+    else:
+        results = movie_api.search(title)
+        set_cached_tmdb(title, results)
 
     if not results:
         print(f"Movie not found: {title} ({year})")
@@ -202,18 +225,33 @@ def process_movie(filepath, info):
     dest_folder = os.path.join(MOVIES_DIR, folder_name)
     dest_path = os.path.join(dest_folder, new_filename)
 
+    if os.path.exists(dest_path):
+        print(f"⚠️ Already exists, skipping: {dest_path}")
+        return False
+
     if DRY_RUN:
         print(f"[DRY RUN] Would move: {filepath} -> {dest_path}")
         return False
 
-    os.makedirs(dest_folder, exist_ok=True)
+    try:
+        os.makedirs(dest_folder, exist_ok=True)
 
-    # Copy + remove (cross-filesystem safe)
-    shutil.copy2(filepath, dest_path)
-    os.remove(filepath)
+        try:
+            # ⚡ Try instant move (same filesystem or supported case)
+            os.rename(filepath, dest_path)
+            print(f"⚡ Moved instantly: {dest_path}")
 
-    print(f"🎬 Moved: {dest_path}")
-    return True
+        except OSError:
+            # 🐢 Fallback for cross-filesystem (NAS, datasets, SMB)
+            shutil.copy(filepath, dest_path)
+            os.remove(filepath)
+            print(f"🐢 Copied + removed: {dest_path}")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Move failed: {e}")
+        return False
 
 
 # =========================
@@ -225,37 +263,74 @@ def process_tv(filepath, info):
     season = info.get("season")
     episode = info.get("episode")
 
-    results = tv_api.search(title)
+    if not title or season is None or episode is None:
+        print(f"❌ Invalid TV metadata for file: {filepath}")
+        return False
+
+    # -------------------------
+    # TMDB caching
+    # -------------------------
+    cached = get_cached_tmdb(title)
+    if cached:
+        results = cached
+    else:
+        results = tv_api.search(title)
+        set_cached_tmdb(title, results)
+
     if not results:
         print(f"TV Show not found: {title}")
         return False
 
     show = results[0]
-
     print(f"TV Show details found: {show.name}")
 
-    season_folder = f"Season {season:02d}"
-    season_folder = sanitize_windows_name(season_folder)
-    show_name = sanitize_windows_name(show.name, fallback="UnknownShow")
-    folder = os.path.join(TV_DIR, show_name, season_folder)
+    # -------------------------
+    # Folder caching (show + season)
+    # -------------------------
+    folder_key = f"{show.id}_S{season:02d}"
+    if folder_key in tv_folder_cache:
+        folder = tv_folder_cache[folder_key]
+    else:
+        season_folder = sanitize_windows_name(f"Season {season:02d}")
+        show_name = sanitize_windows_name(show.name, fallback="UnknownShow")
+        folder = os.path.join(TV_DIR, show_name, season_folder)
+        tv_folder_cache[folder_key] = folder
 
+    # -------------------------
+    # File name sanitization
+    # -------------------------
+    ext = os.path.splitext(filepath)[1]
     new_filename = sanitize_windows_name(
-        f"{show.name} S{season:02d}E{episode:02d}{os.path.splitext(filepath)[1]}",
-        fallback=f"{show.name}_S{season:02d}E{episode:02d}.mkv"
+        f"{show.name} S{season:02d}E{episode:02d}{ext}",
+        fallback=f"{show.name}_S{season:02d}E{episode:02d}{ext}"
     )
     dest_path = os.path.join(folder, new_filename)
 
+    # Skip if already exists
+    if os.path.exists(dest_path):
+        print(f"⚠️ Already exists, skipping: {dest_path}")
+        return False
+
+    # Dry run
     if DRY_RUN:
         print(f"[DRY RUN] Would move: {filepath} -> {dest_path}")
         return False
 
+    # -------------------------
+    # Move file safely
+    # -------------------------
     os.makedirs(folder, exist_ok=True)
 
-    # Copy + remove for cross-filesystem support
-    shutil.copy2(filepath, dest_path)
-    os.remove(filepath)
+    try:
+        # Try instant move (same filesystem)
+        os.rename(filepath, dest_path)
+        print(f"📺 Moved instantly: {dest_path}")
+    except OSError:
+        # Fallback: copy + remove (cross-filesystem)
+        shutil.copy(filepath, dest_path)
+        os.remove(filepath)
+        print(f"📺 Copied + removed: {dest_path}")
 
-    print(f"📺 Moved: {dest_path}")
     return True
 
 # =========================
@@ -321,11 +396,19 @@ def scan_and_process():
         if any(excluded in root.lower() for excluded in EXCLUDED_DIRS):
             continue
 
-        for file in files:
-            full_path = os.path.join(root, file)
+        moved_any = False  # must define outside
 
-            if process_file(full_path):
-                moved_any = True
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = []
+
+            for file in files:
+                full_path = os.path.join(root, file)
+                futures.append(executor.submit(process_file, full_path))
+
+            # Collect results and update moved_any
+            for f in futures:
+                if f.result():  # process_file returns True if moved
+                    moved_any = True
 
     return moved_any
 
