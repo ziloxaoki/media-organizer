@@ -1,5 +1,4 @@
 import os
-import shutil
 import time
 import json
 import subprocess
@@ -7,7 +6,6 @@ import argparse
 import re
 from guessit import guessit
 from tmdbv3api import TMDb, Movie, TV
-from concurrent.futures import ThreadPoolExecutor
 
 # =========================
 # CONFIG (ENV VARS)
@@ -16,6 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 INPUT_DIR = os.getenv("INPUT_DIR", "/downloads")
 MOVIES_DIR = os.getenv("MOVIES_DIR", "/movies")
 TV_DIR = os.getenv("TV_DIR", "/tv")
+MOVIES_HOST_PATH = os.getenv("MOVIES_HOST_PATH")
+TV_HOST_PATH = os.getenv("TV_HOST_PATH")
 CACHE_FILE = os.getenv("CACHE_FILE", "/config/cache.json")
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "300"))
 API_KEY = os.getenv("TMDB_API_KEY")
@@ -134,7 +134,13 @@ def trigger_tmm():
         return
     try:
         print("🚀 Triggering TinyMediaManager...")
-        subprocess.run(["docker", "exec", TMM_CONTAINER, "tmm", "-update"], check=True)
+        # pass dataset paths dynamically
+        subprocess.run([
+            "docker", "exec", TMM_CONTAINER,
+            "tmm", "-update",
+            "-movies", MOVIES_HOST_PATH,
+            "-tv", TV_HOST_PATH
+        ], check=True)
         print("✅ TMM triggered successfully")
     except Exception as e:
         print(f"❌ Failed to trigger TMM: {e}")

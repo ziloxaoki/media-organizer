@@ -92,13 +92,18 @@ services:
     restart: unless-stopped
 
     environment:
-      - TMDB_API_KEY=${TMDB_API_KEY}
-      - INPUT_DIR=${INPUT_DIR}
-      - MOVIES_DIR=${MOVIES_DIR}
-      - TV_DIR=${TV_DIR}
-      - SCAN_INTERVAL=${SCAN_INTERVAL}
+      - TZ=Australia/Sydney
+      - TMDB_API_KEY=910e0b20ecdca4cd80b9c33a6e4d3904
+      - INPUT_DIR=/downloads
+      - MOVIES_DIR=/movies
+      - TV_DIR=/tv
+      - MOVIES_HOST_PATH=/mnt/tank/media/movies  # host path for TMM
+      - TV_HOST_PATH=/mnt/tank/media/tv      
+      - SCAN_INTERVAL=300
+      - SLEEP_INTERVAL=3600
       - PYTHONUNBUFFERED=1
-      - DRY_RUN=false
+      - DRY_RUN=true
+      - TMM_CONTAINER=tmm
 
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
