@@ -96,9 +96,7 @@ services:
       - TMDB_API_KEY=910e0b20ecdca4cd80b9c33a6e4d3904
       - INPUT_DIR=/downloads
       - MOVIES_DIR=/movies
-      - TV_DIR=/tv
-      - MOVIES_HOST_PATH=/media/movies
-      - TV_HOST_PATH=/media/tv      
+      - TV_DIR=/tv    
       - SCAN_INTERVAL=300
       - SLEEP_INTERVAL=3600
       - PYTHONUNBUFFERED=1
