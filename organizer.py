@@ -135,34 +135,69 @@ def sanitize_windows_name(name, fallback="Unknown", max_length=100):
     return truncate_name(name, max_length)
 
 # =========================
+# FIND BEST MOVIE MATCH
+# =========================
+def find_best_match(results, title, year=None):
+    def normalize(s):
+        return re.sub(r'[^a-z0-9]', '', s.lower())
+
+    target = normalize(title)
+
+    # 1. Prefer exact year match
+    if year:
+        for m in results:
+            if getattr(m, "release_date", None):
+                if m.release_date.startswith(str(year)):
+                    return m
+
+            if getattr(m, "first_air_date", None):
+                if m.first_air_date.startswith(str(year)):
+                    return m
+
+    # 2. Title similarity
+    for m in results:
+        name = getattr(m, "title", None) or getattr(m, "name", "")
+        if target in normalize(name):
+            return m
+
+    # 3. fallback
+    return results[0]
+
+
+# =========================
 # PROCESS MOVIE
 # =========================
 
 def process_movie(filepath, info):
     title = info.get("title")
-    year = info.get("year")  # guessit extracts year
+    year = info.get("year")  # from guessit
+
+    if not title:
+        print(f"❌ No title detected for: {filepath}")
+        return False
 
     results = movie_api.search(title)
-    movie = None
-    if results:
-        if year:
-            for r in results:
-                if r.release_date and r.release_date.startswith(str(year)):
-                    movie = r
-                    break
-        if not movie:
-            movie = results[0]
 
-    if not movie:
+    if not results:
         print(f"Movie not found: {title} ({year})")
         return False
 
-    year = movie.release_date[:4] if movie.release_date else "Unknown"
+    # ✅ Use proper matching instead of results[0]
+    movie = find_best_match(results, title, year)
 
-    # Movie folder & filename
-    folder_name = f"{movie.title} ({year})"
-    folder_name = sanitize_windows_name(folder_name, fallback=f"Movie_{year}")
-    new_filename = sanitize_windows_name(f"{movie.title} ({year}){os.path.splitext(filepath)[1]}", fallback=f"{movie.title}_{year}.mkv")
+    movie_year = movie.release_date[:4] if movie.release_date else "Unknown"
+    ext = os.path.splitext(filepath)[1]
+
+    # ✅ Build names
+    folder_name = sanitize_windows_name(
+        f"{movie.title} ({movie_year})",
+        fallback=f"Movie_{movie_year}"
+    )
+
+    new_filename = sanitize_windows_name(
+        f"{movie.title} ({movie_year}){ext}",
+        fallback=f"{movie.title}_{movie_year}{ext}"
+    )
 
     dest_folder = os.path.join(MOVIES_DIR, folder_name)
     dest_path = os.path.join(dest_folder, new_filename)
@@ -173,12 +208,13 @@ def process_movie(filepath, info):
 
     os.makedirs(dest_folder, exist_ok=True)
 
-    # Copy + remove for cross-filesystem support
+    # Copy + remove (cross-filesystem safe)
     shutil.copy2(filepath, dest_path)
     os.remove(filepath)
 
     print(f"🎬 Moved: {dest_path}")
     return True
+
 
 # =========================
 # PROCESS TV
