@@ -27,7 +27,7 @@ DEBOUNCE_SECONDS = int(os.getenv("DEBOUNCE_SECONDS", "10"))
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov")
 EXCLUDED_DIRS = {"tmp", ".tmp", "incomplete"}
 # Replace invalid Windows filename characters
-WINDOWS_ILLEGAL = r'[<>:"/\\|?*\n\r\t]'
+WINDOWS_ILLEGAL = r'[<>:"/\\|?*\n\r\t\uFF1A]'
 
 # =========================
 # TMDB SETUP
@@ -108,22 +108,31 @@ def trigger_tmm():
 # FILENAME SANITIZER
 # =========================
 def truncate_name(name, max_length=100):
-    if len(name) > max_length:
-        return name[:max_length].rstrip()
-    return name
+    if len(name) <= max_length:
+        return name
+
+    truncated = name[:max_length]
+
+    # cut at last space to avoid breaking words
+    if ' ' in truncated:
+        truncated = truncated.rsplit(' ', 1)[0]
+
+    return truncated.rstrip()
 
 def sanitize_windows_name(name, fallback="Unknown", max_length=100):
-    # Remove illegal Windows chars
+    # Remove illegal Windows chars (including fullwidth colon)
     name = re.sub(WINDOWS_ILLEGAL, '', name)
+
+    # Optional: replace colon with nicer separator instead of removing
+    name = name.replace(":", " -").replace("：", " -")
+
     # Collapse spaces
     name = re.sub(r'\s+', ' ', name).strip()
-    # Fallback if empty
+
     if not name:
         name = fallback
-    # Truncate
-    if len(name) > max_length:
-        name = name[:max_length].rstrip()
-    return name
+
+    return truncate_name(name, max_length)
 
 # =========================
 # PROCESS MOVIE
@@ -131,13 +140,23 @@ def sanitize_windows_name(name, fallback="Unknown", max_length=100):
 
 def process_movie(filepath, info):
     title = info.get("title")
+    year = info.get("year")  # guessit extracts year
 
     results = movie_api.search(title)
-    if not results:
-        print(f"Movie not found: {title}")
+    movie = None
+    if results:
+        if year:
+            for r in results:
+                if r.release_date and r.release_date.startswith(str(year)):
+                    movie = r
+                    break
+        if not movie:
+            movie = results[0]
+
+    if not movie:
+        print(f"Movie not found: {title} ({year})")
         return False
 
-    movie = results[0]
     year = movie.release_date[:4] if movie.release_date else "Unknown"
 
     # Movie folder & filename
@@ -259,18 +278,18 @@ def process_file(filepath):
 def scan_and_process():
     moved_any = False
 
+
+    # Remove excluded directories from traversal
     for root, dirs, files in os.walk(INPUT_DIR):
-        # Remove excluded directories from traversal
-        for root, dirs, files in os.walk(INPUT_DIR):
-            # Skip any path containing excluded dirs
-            if any(excluded in root.lower() for excluded in EXCLUDED_DIRS):
-                continue
+        # Skip any path containing excluded dirs
+        if any(excluded in root.lower() for excluded in EXCLUDED_DIRS):
+            continue
 
-            for file in files:
-                full_path = os.path.join(root, file)
+        for file in files:
+            full_path = os.path.join(root, file)
 
-                if process_file(full_path):
-                    moved_any = True
+            if process_file(full_path):
+                moved_any = True
 
     return moved_any
 
@@ -293,7 +312,10 @@ def rename_file(filepath, info):
         movie = results[0]
         year = movie.release_date[:4] if movie.release_date else "Unknown"
 
-        new_name = f"{movie.title} ({year}){ext}"
+        new_name = sanitize_windows_name(
+            f"{movie.title} ({year}){ext}",
+            fallback=f"{movie.title}_{year}{ext}"
+        )
 
     elif info.get("type") == "episode":
         title = info.get("title")
@@ -307,7 +329,10 @@ def rename_file(filepath, info):
 
         show = results[0]
 
-        new_name = f"{show.name} S{season:02d}E{episode:02d}{ext}"
+        new_name = sanitize_windows_name(
+            f"{show.name} S{season:02d}E{episode:02d}{ext}",
+            fallback=f"{show.name}_S{season:02d}E{episode:02d}{ext}"
+        )
 
     else:
         print(f"Ignored: {filename}")
