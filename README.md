@@ -76,8 +76,11 @@ version: "3.9"
 services:
   fix-permissions:
     image: busybox
-    command: sh -c "chown -R 568:568 /config"
+    command: sh -c "chown -R 568:568 /downloads /movies /tv /config"
     volumes:
+      - /mnt/MainPool/Downloads:/downloads
+      - /mnt/MainPool/Videos/Movies:/movies
+      - /mnt/MainPool/Videos/Series:/tv
       - /mnt/apps-pool/media-organizer/config:/config
 
   media-organizer:

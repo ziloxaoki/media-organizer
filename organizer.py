@@ -208,12 +208,15 @@ def process_movie(filepath, info):
 
     os.makedirs(dest_folder, exist_ok=True)
     try:
+        # Try fast move
         os.rename(filepath, dest_path)
-        print(f"📀 Moved instantly: {dest_path}")
+        print(f"⚡ Moved instantly: {dest_path}")
     except OSError:
-        shutil.copy(filepath, dest_path)
+        # Cross-filesystem fallback
+        # 1. Copy file content only, ignore permissions
+        shutil.copyfile(filepath, dest_path)
         os.remove(filepath)
-        print(f"📀 Copied + removed: {dest_path}")
+        print(f"🐢 Copied + removed: {dest_path}")
 
     return True
 
@@ -266,7 +269,9 @@ def process_tv(filepath, info):
         os.rename(filepath, dest_path)
         print(f"📺 Moved instantly: {dest_path}")
     except OSError:
-        shutil.copy(filepath, dest_path)
+        # Cross-filesystem fallback
+        # 1. Copy file content only, ignore permissions
+        shutil.copyfile(filepath, dest_path)
         os.remove(filepath)
         print(f"📺 Copied + removed: {dest_path}")
 
