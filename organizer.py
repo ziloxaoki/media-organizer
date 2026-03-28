@@ -44,7 +44,7 @@ movie_api = Movie()
 tv_api = TV()
 
 # =========================
-# CACHES
+# CACHE
 # =========================
 
 def load_cache():
@@ -54,11 +54,8 @@ def load_cache():
                 return json.load(f)
         except Exception:
             print("⚠️ Cache file corrupted. Resetting to empty cache.")
-            try:
-                with open(CACHE_FILE, "w") as f:
-                    json.dump({}, f)
-            except Exception as e:
-                print(f"❌ Failed to reset cache file: {e}")
+            with open(CACHE_FILE, "w") as f:
+                json.dump({}, f)
             return {}
     return {}
 
@@ -73,16 +70,10 @@ def get_cached_tmdb(title):
     data = cache.get(key)
     if not data:
         return None
-
-    # Convert back to minimal AsObj-like dict for processing
     from tmdbv3api.tmdb import AsObj
-    results = []
-    for item in data:
-        results.append(AsObj(item))
-    return results
+    return [AsObj(item) for item in data]
 
 def set_cached_tmdb(title, results):
-    # Convert results to JSON-serializable dicts
     serializable = []
     for r in results:
         data = {}
@@ -91,9 +82,7 @@ def set_cached_tmdb(title, results):
             if value is not None:
                 data[attr] = value
         serializable.append(data)
-
-    key = f"tmdb::{title.lower()}"
-    cache[key] = serializable
+    cache[f"tmdb::{title.lower()}"] = serializable
     save_cache()
 
 # =========================
@@ -103,9 +92,6 @@ def set_cached_tmdb(title, results):
 def is_video(file):
     return file.lower().endswith(VIDEO_EXTENSIONS)
 
-def is_incomplete(file):
-    return file.endswith(".part") or file.endswith(".!qb")
-
 def already_processed(path):
     return path in cache
 
@@ -113,9 +99,35 @@ def mark_processed(path):
     cache[path] = True
     save_cache()
 
-# =========================
-# TMM TRIGGER
-# =========================
+def sanitize_windows_name(name, fallback="Unknown"):
+    name = re.sub(WINDOWS_ILLEGAL, '', name)
+    name = name.replace(":", " -").replace("：", " -")
+    name = re.sub(r'\s+', ' ', name).strip()
+    return name if name else fallback
+
+def find_best_match(results, title, year=None):
+    def normalize(s):
+        return re.sub(r'[^a-z0-9]', '', s.lower())
+    target = normalize(title)
+    if year:
+        for m in results:
+            if getattr(m, "release_date", "").startswith(str(year)) or getattr(m, "first_air_date", "").startswith(str(year)):
+                return m
+    for m in results:
+        name = getattr(m, "title", None) or getattr(m, "name", "")
+        if target in normalize(name):
+            return m
+    return results[0]
+
+def fast_move(src, dst):
+    if DRY_RUN:
+        print(f"[DRY RUN] Would move folder: {src} -> {dst}")
+        return
+    if os.path.exists(dst):
+        print(f"⚠️ Destination exists, skipping move: {dst}")
+        return
+    subprocess.run(["mv", src, dst], check=True)
+    mark_processed(dst)
 
 def trigger_tmm():
     if not TRIGGER_TMM:
@@ -128,190 +140,72 @@ def trigger_tmm():
         print(f"❌ Failed to trigger TMM: {e}")
 
 # =========================
-# FILENAME SANITIZER
+# PROCESS FOLDERS
 # =========================
 
-def truncate_name(name, max_length=100):
-    if len(name) <= max_length:
-        return name
-    truncated = name[:max_length]
-    if ' ' in truncated:
-        truncated = truncated.rsplit(' ', 1)[0]
-    return truncated.rstrip()
-
-def sanitize_windows_name(name, fallback="Unknown", max_length=100):
-    name = re.sub(WINDOWS_ILLEGAL, '', name)
-    name = name.replace(":", " -").replace("：", " -")
-    name = re.sub(r'\s+', ' ', name).strip()
-    if not name:
-        name = fallback
-    return truncate_name(name, max_length)
-
-# =========================
-# FIND BEST MATCH
-# =========================
-
-def find_best_match(results, title, year=None):
-    def normalize(s):
-        return re.sub(r'[^a-z0-9]', '', s.lower())
-    target = normalize(title)
-    # Prefer exact year match
-    if year:
-        for m in results:
-            if getattr(m, "release_date", None) and m.release_date.startswith(str(year)):
-                return m
-            if getattr(m, "first_air_date", None) and m.first_air_date.startswith(str(year)):
-                return m
-    # Title similarity
-    for m in results:
-        name = getattr(m, "title", None) or getattr(m, "name", "")
-        if target in normalize(name):
-            return m
-    return results[0]
-
-# =========================
-# REMOVE ORIGIN FOLDER
-# =========================
-def remove_empty_parents(path, stop_at=INPUT_DIR):
-    current = os.path.dirname(path)
-    while os.path.abspath(current).startswith(os.path.abspath(stop_at)):
-        try:
-            os.rmdir(current)
-            print(f"🗑 Removed empty folder: {current}")
-        except OSError:
-            # Folder not empty or permission error
-            break
-        current = os.path.dirname(current)
-
-# =========================
-# PROCESS MOVIE
-# =========================
-
-def process_movie(filepath, info):
-    title = info.get("title")
-    year = info.get("year")
+def process_movie_folder(folder_path):
+    files = [f for f in os.listdir(folder_path) if is_video(f)]
+    if not files:
+        return False
+    info = guessit(files[0])
+    title, year = info.get("title"), info.get("year")
     if not title:
-        print(f"❌ No title detected for: {filepath}")
+        print(f"❌ No title detected for folder: {folder_path}")
         return False
 
     cached = get_cached_tmdb(title)
     results = cached if cached else movie_api.search(title)
     if not cached:
         set_cached_tmdb(title, results)
-
     if not results:
         print(f"Movie not found: {title} ({year})")
         return False
 
     movie = find_best_match(results, title, year)
     movie_year = movie.release_date[:4] if movie.release_date else "Unknown"
-    ext = os.path.splitext(filepath)[1]
-
-    folder_name = sanitize_windows_name(f"{movie.title} ({movie_year})", fallback=f"Movie_{movie_year}")
-    new_filename = sanitize_windows_name(f"{movie.title} ({movie_year}){ext}", fallback=f"{movie.title}_{movie_year}{ext}")
-    dest_folder = os.path.join(MOVIES_DIR, folder_name)
-    dest_path = os.path.join(dest_folder, new_filename)
-
-    if os.path.exists(dest_path):
-        print(f"⚠️ Already exists, skipping: {dest_path}")
-        return False
-
-    if DRY_RUN:
-        print(f"[DRY RUN] Would move: {filepath} -> {dest_path}")
-        return False
-
-    os.makedirs(dest_folder, exist_ok=True)
-    try:
-        # Try fast move
-        os.rename(filepath, dest_path)
-        print(f"⚡ Moved instantly: {dest_path}")
-    except OSError:
-        # Cross-filesystem fallback
-        # 1. Copy file content only, ignore permissions
-        shutil.copyfile(filepath, dest_path)
-        os.remove(filepath)
-        remove_empty_parents(filepath)
-        print(f"🐢 Copied + removed: {dest_path}")
-
+    dest_folder = os.path.join(MOVIES_DIR, sanitize_windows_name(f"{movie.title} ({movie_year})"))
+    fast_move(folder_path, dest_folder)
+    print(f"🎬 Movie folder moved: {dest_folder}")
     return True
 
-# =========================
-# PROCESS TV
-# =========================
-
-def process_tv(filepath, info):
-    title = info.get("title")
-    season = info.get("season")
-    episode = info.get("episode")
-    if not title or season is None or episode is None:
-        print(f"❌ Invalid TV metadata for file: {filepath}")
+def process_tv_folder(folder_path):
+    files = [f for f in os.listdir(folder_path) if is_video(f)]
+    if not files:
+        return False
+    info = guessit(files[0])
+    title, season = info.get("title"), info.get("season")
+    if not title or season is None:
+        print(f"❌ Invalid TV metadata for folder: {folder_path}")
         return False
 
     cached = get_cached_tmdb(title)
     results = cached if cached else tv_api.search(title)
     if not cached:
         set_cached_tmdb(title, results)
-
-    if not results:
-        print(f"TV Show not found: {title}")
-        return False
-
     show = results[0]
-    folder_key = f"{show.id}_S{season:02d}"
-    if folder_key in tv_folder_cache:
-        folder = tv_folder_cache[folder_key]
-    else:
-        season_folder = sanitize_windows_name(f"Season {season:02d}")
-        show_name = sanitize_windows_name(show.name, fallback="UnknownShow")
-        folder = os.path.join(TV_DIR, show_name, season_folder)
-        tv_folder_cache[folder_key] = folder
 
-    ext = os.path.splitext(filepath)[1]
-    new_filename = sanitize_windows_name(f"{show.name} S{season:02d}E{episode:02d}{ext}",
-                                         fallback=f"{show.name}_S{season:02d}E{episode:02d}{ext}")
-    dest_path = os.path.join(folder, new_filename)
-
-    if os.path.exists(dest_path):
-        print(f"⚠️ Already exists, skipping: {dest_path}")
-        return False
-
-    if DRY_RUN:
-        print(f"[DRY RUN] Would move: {filepath} -> {dest_path}")
-        return False
-
-    os.makedirs(folder, exist_ok=True)
-    try:
-        os.rename(filepath, dest_path)
-        print(f"📺 Moved instantly: {dest_path}")
-    except OSError:
-        # Cross-filesystem fallback
-        # 1. Copy file content only, ignore permissions
-        shutil.copyfile(filepath, dest_path)
-        os.remove(filepath)
-        remove_empty_parents(filepath)
-        print(f"📺 Copied + removed: {dest_path}")
-
+    season_folder_name = sanitize_windows_name(f"Season {season:02d}")
+    show_name = sanitize_windows_name(show.name)
+    dest_folder = os.path.join(TV_DIR, show_name, season_folder_name)
+    fast_move(folder_path, dest_folder)
+    print(f"📺 TV season folder moved: {dest_folder}")
     return True
 
-# =========================
-# PROCESS FILE
-# =========================
-
-def process_file(filepath):
-    if already_processed(filepath):
+def process_folder(folder_path):
+    if already_processed(folder_path):
         return False
-    if is_incomplete(filepath) or not is_video(filepath):
+    # Try to detect if folder is movie or TV show
+    files = [f for f in os.listdir(folder_path) if is_video(f)]
+    if not files:
         return False
-
-    info = guessit(os.path.basename(filepath))
+    info = guessit(files[0])
     moved = False
     if info.get("type") == "movie":
-        moved = process_movie(filepath, info)
+        moved = process_movie_folder(folder_path)
     elif info.get("type") == "episode":
-        moved = process_tv(filepath, info)
-
+        moved = process_tv_folder(folder_path)
     if moved:
-        mark_processed(filepath)
+        mark_processed(folder_path)
     return moved
 
 # =========================
@@ -320,14 +214,12 @@ def process_file(filepath):
 
 def scan_and_process():
     moved_any = False
-    for root, dirs, files in os.walk(INPUT_DIR):
-        if any(excl in root.lower() for excl in EXCLUDED_DIRS):
-            continue
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = [executor.submit(process_file, os.path.join(root, f)) for f in files]
-            for f in futures:
-                if f.result():
-                    moved_any = True
+    for root, dirs, _ in os.walk(INPUT_DIR):
+        dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_DIRS]  # skip excluded
+        for d in dirs:
+            full_path = os.path.join(root, d)
+            if process_folder(full_path):
+                moved_any = True
     return moved_any
 
 # =========================
@@ -337,30 +229,30 @@ def scan_and_process():
 def rename_file(filepath, info):
     filename = os.path.basename(filepath)
     ext = os.path.splitext(filename)[1]
+    new_name = None
+
     if info.get("type") == "movie":
         title = info.get("title")
         results = movie_api.search(title)
         if not results: return
         movie = results[0]
         year = movie.release_date[:4] if movie.release_date else "Unknown"
-        new_name = sanitize_windows_name(f"{movie.title} ({year}){ext}", fallback=f"{movie.title}_{year}{ext}")
+        new_name = sanitize_windows_name(f"{movie.title} ({year}){ext}")
     elif info.get("type") == "episode":
         title = info.get("title")
-        season = info.get("season")
-        episode = info.get("episode")
+        season, episode = info.get("season"), info.get("episode")
         results = tv_api.search(title)
         if not results: return
         show = results[0]
-        new_name = sanitize_windows_name(f"{show.name} S{season:02d}E{episode:02d}{ext}",
-                                         fallback=f"{show.name}_S{season:02d}E{episode:02d}{ext}")
-    else:
-        return
-    new_path = os.path.join(os.path.dirname(filepath), new_name)
-    if DRY_RUN:
-        print(f"[DRY RUN] Would rename: {filepath} -> {new_path}")
-        return
-    os.rename(filepath, new_path)
-    print(f"✏️ Renamed: {new_path}")
+        new_name = sanitize_windows_name(f"{show.name} S{season:02d}E{episode:02d}{ext}")
+
+    if new_name:
+        new_path = os.path.join(os.path.dirname(filepath), new_name)
+        if DRY_RUN:
+            print(f"[DRY RUN] Would rename: {filepath} -> {new_path}")
+            return
+        os.rename(filepath, new_path)
+        print(f"✏️ Renamed: {new_path}")
 
 def process_cli_path(path):
     print(f"🔵 CLI mode: processing {path}")
@@ -371,7 +263,6 @@ def process_cli_path(path):
                 continue
             info = guessit(f)
             rename_file(full_path, info)
-    # Trigger TMM after all CLI renames
     print(f"⏳ CLI task completed, triggering TMM...")
     trigger_tmm()
 
@@ -393,7 +284,6 @@ if __name__ == "__main__":
     args = parse_args()
     if args.rename_only:
         path = args.path or INPUT_DIR
-        print(f"🔵 CLI mode (rename only): processing {path}")
         process_cli_path(path)
     else:
         print("🟢 Media Organizer started (watch mode)")

@@ -121,6 +121,25 @@ services:
       - "5800:5800"
       - "5900:5900"
 ```
+
+## 2. qBittorrent configuration
+All changes are performed within the /downloads folder to it is necessary that the files are not locked by qBittorrent.
+✅ Auto-remove torrent after completion (simple)
+In qBittorrent settings:
+Go to Tools → Options → BitTorrent
+Enable:
+“When ratio reaches”
+Set:
+Ratio = 0 (or very low, like 0.01)
+OR time-based removal
+then "Remove torrent"
+
+👉 Result:
+
+Torrent stops almost immediately after finishing
+Files are unlocked
+Your script can move/delete safely
+
 🧰 CLI Mode (Rename Files In-Place)
 
 In addition to automatic background scanning, Media Organizer can be used as a command-line tool to rename media files directly within any folder — without moving them.
