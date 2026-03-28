@@ -19,6 +19,7 @@ TV_HOST_PATH = os.getenv("TV_HOST_PATH")
 CACHE_FILE = os.getenv("CACHE_FILE", "/config/cache.json")
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "300"))
 API_KEY = os.getenv("TMDB_API_KEY")
+FORCE_REPROCESS = os.getenv("FORCE_REPROCESS", "false").lower() == "true"
 
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 TRIGGER_TMM = os.getenv("TRIGGER_TMM", "true").lower() == "true"
@@ -46,7 +47,6 @@ tv_api = TV()
 # =========================
 # CACHE
 # =========================
-
 def load_cache():
     if os.path.exists(CACHE_FILE):
         try:
@@ -93,7 +93,7 @@ def is_video(file):
     return file.lower().endswith(VIDEO_EXTENSIONS)
 
 def already_processed(path):
-    return path in cache
+    return False if FORCE_REPROCESS else path in cache
 
 def mark_processed(path):
     cache[path] = True
@@ -120,30 +120,33 @@ def find_best_match(results, title, year=None):
     return results[0]
 
 def fast_move(src, dst):
-    if DRY_RUN:
-        print(f"[DRY RUN] Would move folder: {src} -> {dst}")
-        return
-    if os.path.exists(dst):
-        print(f"⚠️ Destination exists, skipping move: {dst}")
-        return
-    subprocess.run(["mv", src, dst], check=True)
-    mark_processed(dst)
+    """Move a folder quickly using os.rename or system mv."""
+    # Ensure the parent folder exists
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    try:
+        # Try os.rename first (fast, works within same filesystem)
+        os.rename(src, dst)
+        print(f"⚡ Moved instantly: {dst}")
+    except OSError:
+        # Fallback to system mv (handles cross-filesystem)
+        subprocess.run(["mv", src, dst], check=True)
+        print(f"🚀 Moved via system mv: {dst}")
 
 def trigger_tmm():
     if not TRIGGER_TMM:
         return
     try:
+        tmm_path = "/app/tinyMediaManager"
         print("🚀 Triggering TinyMediaManager...")
-        # pass dataset paths dynamically
         subprocess.run([
-            "docker", "exec", TMM_CONTAINER,
-            "tmm", "-update",
-            "-movies", MOVIES_HOST_PATH,
-            "-tv", TV_HOST_PATH
+            "docker", "exec", TMM_CONTAINER, tmm_path,
+            "--update"  # only this flag
         ], check=True)
         print("✅ TMM triggered successfully")
     except Exception as e:
         print(f"❌ Failed to trigger TMM: {e}")
+
+
 
 # =========================
 # PROCESS FOLDERS
@@ -199,16 +202,20 @@ def process_tv_folder(folder_path):
 
 def process_folder(folder_path):
     if already_processed(folder_path):
+        print(f"📺 {folder_path} already processed.")
         return False
     # Try to detect if folder is movie or TV show
     files = [f for f in os.listdir(folder_path) if is_video(f)]
     if not files:
+        print(f"{folder_path}: no files found.")
         return False
     info = guessit(files[0])
     moved = False
     if info.get("type") == "movie":
+        print(f"Processing movie: {info.get('title')}.")
         moved = process_movie_folder(folder_path)
     elif info.get("type") == "episode":
+        print(f"Processing tv show: {info.get('title')}.")
         moved = process_tv_folder(folder_path)
     if moved:
         mark_processed(folder_path)
