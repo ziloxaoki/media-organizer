@@ -152,7 +152,7 @@ def trigger_tmm():
 # PROCESS FOLDERS
 # =========================
 
-def process_movie_folder(folder_path):
+def process_movie(folder_path):
     files = [f for f in os.listdir(folder_path) if is_video(f)]
     if not files:
         return False
@@ -177,7 +177,7 @@ def process_movie_folder(folder_path):
     print(f"🎬 Movie folder moved: {dest_folder}")
     return True
 
-def process_tv_folder(folder_path):
+def process_tv(folder_path):
     files = [f for f in os.listdir(folder_path) if is_video(f)]
     if not files:
         return False
@@ -200,25 +200,44 @@ def process_tv_folder(folder_path):
     print(f"📺 TV season folder moved: {dest_folder}")
     return True
 
+
 def process_folder(folder_path):
     if already_processed(folder_path):
         print(f"📺 {folder_path} already processed.")
         return False
-    # Try to detect if folder is movie or TV show
+
     files = [f for f in os.listdir(folder_path) if is_video(f)]
     if not files:
         print(f"{folder_path}: no files found.")
         return False
+
+    # 🔹 Step 1: Rename all video files first
+    for f in files:
+        full_path = os.path.join(folder_path, f)
+        info = guessit(f)
+        rename_file(full_path, info)
+
+    # 🔹 Step 2: Re-scan after renaming
+    files = [f for f in os.listdir(folder_path) if is_video(f)]
+    if not files:
+        return False
+
+    # 🔹 Step 3: Detect type again (more accurate after rename)
     info = guessit(files[0])
+
     moved = False
+
     if info.get("type") == "movie":
         print(f"Processing movie: {info.get('title')}.")
-        moved = process_movie_folder(folder_path)
+        moved = process_movie(folder_path)
+
     elif info.get("type") == "episode":
         print(f"Processing tv show: {info.get('title')}.")
-        moved = process_tv_folder(folder_path)
+        moved = process_tv(folder_path)
+
     if moved:
         mark_processed(folder_path)
+
     return moved
 
 # =========================
