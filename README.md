@@ -127,7 +127,7 @@ services:
 ```
 
 ## 2. qBittorrent configuration
-All changes are performed within the /downloads folder to it is necessary that the files are not locked by qBittorrent.
+All changes are performed within the /downloads folder so it is necessary that the files are not locked by qBittorrent.
 ✅ Auto-remove torrent after completion (simple)
 In qBittorrent settings:
 Go to Tools → Options → BitTorrent
