@@ -275,6 +275,7 @@ def process_folder(folder):
         if DRY_RUN:
             print(f"[DRY RUN] Would remove folder: {folder}")  # top-level folder
         else:
+            print(f"Remove folder: {folder}")  # top-level folder
             subprocess.run(["rm", "-rf", folder])
 
     return moved
