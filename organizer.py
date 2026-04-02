@@ -188,12 +188,6 @@ def process_movie(folder):
             subprocess.run(["mv", src, dest], check=True)
             print(f"🚀 Moved: {dest}")
 
-    # Remove original folder
-    if DRY_RUN:
-        print(f"[DRY_RUN] Would remove folder: {folder}")
-    else:
-        subprocess.run(["rm", "-rf", folder])
-
     return True
 
 
@@ -245,12 +239,6 @@ def process_tv_season(folder):
             subprocess.run(["mv", src, dest], check=True)
             print(f"🚀 Moved: {dest}")
 
-    # Remove original folder
-    if DRY_RUN:
-        print(f"[DRY_RUN] Would remove folder: {folder}")
-    else:
-        subprocess.run(["rm", "-rf", folder])
-
     return True
 
 
@@ -284,17 +272,32 @@ def process_folder(folder):
 
     if moved:
         mark_processed(folder)
+
     return moved
+
 
 def scan_and_process():
     moved_any = False
+    is_parent_folder = True
+    parent_folder = None
     for root, dirs, _ in os.walk(INPUT_DIR):
         dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_DIRS]
         for d in dirs:
-            path = os.path.join(root, d)
-            target = find_video_folder(path) or path
+            if is_parent_folder:
+                parent_folder = d
+                is_parent_folder = False
+            original_path = os.path.join(root, d)
+            target = find_video_folder(original_path) or original_path
+
             if process_folder(target):
                 moved_any = True
+
+    if moved_any:
+        if DRY_RUN:
+            print(f"[DRY RUN] Would remove folder: {parent_folder}")  # top-level folder
+        else:
+            subprocess.run(["rm", "-rf", parent_folder])
+
     return moved_any
 
 # =========================
