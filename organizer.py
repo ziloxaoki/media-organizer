@@ -18,6 +18,7 @@ CACHE_FILE = os.getenv("CACHE_FILE", "/config/cache.json")
 
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "300"))
 DEBOUNCE_SECONDS = int(os.getenv("DEBOUNCE_SECONDS", "10"))
+FORCE_REPROCESS = os.getenv("FORCE_REPROCESS", "false").lower() == "true"
 
 API_KEY = os.getenv("TMDB_API_KEY")
 
@@ -121,6 +122,15 @@ def trigger_tmm():
 def is_valid_season_folder(name):
     return re.match(r"(season\s?\d+|s\d{1,2})", name.lower())
 
+def already_processed(path):
+    return False if FORCE_REPROCESS else path in cache
+
+def mark_processed(path):
+    if not FORCE_REPROCESS:
+        cache[path] = True
+        save_cache()
+
+
 # =========================
 # CORE LOGIC
 # =========================
@@ -186,40 +196,51 @@ def process_tv(folder):
 
 
 def process_folder(folder):
-    name = os.path.basename(folder).lower()
-
-    if name in EXCLUDED_DIRS:
+    # Skip if already processed, unless FORCE_REPROCESS is True
+    if not FORCE_REPROCESS and already_processed(folder):
+        print(f"⏭️ Skipping already processed: {folder}")
         return False
 
-    # Detect TV root (contains Season folders)
+    folder_name = os.path.basename(folder).lower()
+
+    if folder_name in EXCLUDED_DIRS:
+        print(f"⏭️ Skipping excluded folder: {folder}")
+        return False
+
+    # Detect season folders
     subfolders = [
         d for d in os.listdir(folder)
         if os.path.isdir(os.path.join(folder, d))
     ]
+    season_folders = [d for d in subfolders if is_valid_season_folder(d)]
 
-    seasons = [d for d in subfolders if is_valid_season_folder(d)]
+    moved = False
 
-    if seasons:
-        moved = False
-        for s in seasons:
-            if process_tv(os.path.join(folder, s)):
+    if season_folders:
+        print(f"📺 TV show root detected: {folder}")
+        for s in season_folders:
+            season_path = os.path.join(folder, s)
+            if process_tv(season_path):
                 moved = True
-        return moved
+    else:
+        # Single folder: movie or single-season TV
+        files = [f for f in os.listdir(folder) if is_video(f)]
+        if not files:
+            print(f"{folder}: no video files found")
+            return False
 
-    # Otherwise movie or single season
-    files = [f for f in os.listdir(folder) if is_video(f)]
-    if not files:
-        return False
+        info = guessit(files[0])
 
-    info = guessit(files[0])
+        if info.get("type") == "movie":
+            moved = process_movie(folder)
+        elif info.get("type") == "episode":
+            moved = process_tv(folder)
 
-    if info.get("type") == "movie":
-        return process_movie(folder)
+    if moved:
+        mark_processed(folder)
 
-    if info.get("type") == "episode":
-        return process_tv(folder)
+    return moved
 
-    return False
 
 
 def scan_and_process():
