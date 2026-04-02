@@ -99,6 +99,9 @@ def find_best_match(results, title, year=None):
 
 def safe_move(src, dst):
     """Move a file or folder reliably, even across filesystems."""
+    if DRY_RUN:
+        print(f"[DRY RUN] Would move: {src} -> {dst}")
+        return
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     try:
         os.rename(src, dst)
@@ -109,6 +112,9 @@ def safe_move(src, dst):
 
 def trigger_tmm():
     if not TRIGGER_TMM:
+        return
+    if DRY_RUN:
+        print(f"[DRY RUN] Would trigger TMM in container: {TMM_CONTAINER}")
         return
     try:
         subprocess.run([
@@ -153,7 +159,6 @@ def process_movie(folder):
     info = guessit(files[0])
     title = info.get("title")
     year = info.get("year")
-
     if not title:
         return False
 
@@ -164,14 +169,20 @@ def process_movie(folder):
 
     movie_title = sanitize(getattr(movie, "title", title))
     movie_year = (getattr(movie, "release_date", "") or "")[:4] or "Unknown"
-    dest = os.path.join(MOVIES_DIR, f"{movie_title} ({movie_year})")
+    dest_folder = os.path.join(MOVIES_DIR, f"{movie_title} ({movie_year})")
 
-    if DRY_RUN:
-        print(f"[DRY RUN] {folder} -> {dest}")
-        return False
+    for f in files:
+        src = os.path.join(folder, f)
+        new_name = f"{movie_title} ({movie_year}){os.path.splitext(f)[1]}"
+        dest = os.path.join(dest_folder, sanitize(new_name))
+        safe_move(src, dest)
 
-    safe_move(folder, dest)
-    print(f"🎬 {dest}")
+    if not DRY_RUN:
+        subprocess.run(["rm", "-rf", folder])
+    else:
+        print(f"[DRY RUN] Would remove original folder: {folder}")
+
+    print(f"🎬 Movie processed: {movie_title}")
     return True
 
 def process_tv_season(folder):
@@ -185,7 +196,6 @@ def process_tv_season(folder):
     if not files_to_move:
         return False
 
-    # Get show title and season from first episode
     info = guessit(os.path.basename(files_to_move[0]))
     title = info.get("title")
     season = info.get("season")
@@ -199,9 +209,12 @@ def process_tv_season(folder):
 
     show_name = sanitize(getattr(show, "name", title))
     season_folder = os.path.join(TV_DIR, show_name, f"Season {season:02d}")
-    os.makedirs(season_folder, exist_ok=True)
+    if not DRY_RUN:
+        os.makedirs(season_folder, exist_ok=True)
+    else:
+        print(f"[DRY RUN] Would create folder: {season_folder}")
 
-    # Move/rename only files, flattening any nested folders
+    # Move/rename files
     for src in files_to_move:
         ep_info = guessit(os.path.basename(src))
         ep_season = ep_info.get("season")
@@ -216,15 +229,17 @@ def process_tv_season(folder):
         dest = os.path.join(season_folder, sanitize(new_name))
         safe_move(src, dest)
 
-    # Delete all subfolders in the source season folder
+    # Delete empty subfolders
     for root, dirs, _ in os.walk(folder, topdown=False):
         for d in dirs:
             full_path = os.path.join(root, d)
             if os.path.exists(full_path):
-                subprocess.run(["rm", "-rf", full_path])
+                if DRY_RUN:
+                    print(f"[DRY RUN] Would remove folder: {full_path}")
+                else:
+                    subprocess.run(["rm", "-rf", full_path])
 
     return True
-
 
 def process_folder(folder):
     if already_processed(folder):
@@ -235,7 +250,6 @@ def process_folder(folder):
     if name in EXCLUDED_DIRS:
         return False
 
-    # Check for season subfolders
     subfolders = [d for d in os.listdir(folder) if os.path.isdir(os.path.join(folder, d))]
     season_folders = [d for d in subfolders if is_valid_season_folder(d)]
 
@@ -244,7 +258,6 @@ def process_folder(folder):
         for s in season_folders:
             moved |= process_tv_season(os.path.join(folder, s))
     else:
-        # Single folder with videos
         video_folder = find_video_folder(folder) or folder
         files = [f for f in os.listdir(video_folder) if is_video(f)]
         if not files:
@@ -282,7 +295,6 @@ def rename_file(path):
         return
 
     ext = os.path.splitext(path)[1]
-
     if info.get("type") == "movie":
         results = movie_api.search(title)
         movie = find_best_match(results, title)
@@ -301,13 +313,11 @@ def rename_file(path):
             return
         name = sanitize(getattr(show, "name", title))
         new_name = f"{name} S{season:02d}E{episode:02d}{ext}"
-
     else:
         return
 
     dest = os.path.join(os.path.dirname(path), sanitize(new_name))
-    if path != dest:
-        safe_move(path, dest)
+    safe_move(path, dest)
 
 def process_cli(path):
     for root, _, files in os.walk(path):
