@@ -272,33 +272,30 @@ def process_folder(folder):
 
     if moved:
         mark_processed(folder)
+        if DRY_RUN:
+            print(f"[DRY RUN] Would remove folder: {folder}")  # top-level folder
+        else:
+            subprocess.run(["rm", "-rf", folder])
 
     return moved
 
-
 def scan_and_process():
     moved_any = False
-    is_parent_folder = True
-    parent_folder = None
-    for root, dirs, _ in os.walk(INPUT_DIR):
-        dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_DIRS]
-        for d in dirs:
-            if is_parent_folder:
-                parent_folder = d
-                is_parent_folder = False
-            original_path = os.path.join(root, d)
-            target = find_video_folder(original_path) or original_path
 
-            if process_folder(target):
-                moved_any = True
+    for d in os.listdir(INPUT_DIR):
+        path = os.path.join(INPUT_DIR, d)
 
-    if moved_any:
-        if DRY_RUN:
-            print(f"[DRY RUN] Would remove folder: {parent_folder}")  # top-level folder
-        else:
-            subprocess.run(["rm", "-rf", parent_folder])
+        if not os.path.isdir(path):
+            continue
+
+        if d.lower() in EXCLUDED_DIRS:
+            continue
+
+        if process_folder(path):
+            moved_any = True
 
     return moved_any
+
 
 # =========================
 # CLI MODE
