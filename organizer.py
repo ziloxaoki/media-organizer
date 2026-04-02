@@ -171,22 +171,33 @@ def process_movie(folder):
     movie_year = (getattr(movie, "release_date", "") or "")[:4] or "Unknown"
     dest_folder = os.path.join(MOVIES_DIR, f"{movie_title} ({movie_year})")
 
+    if DRY_RUN:
+        print(f"[DRY RUN] Would create folder: {dest_folder}")
+    else:
+        os.makedirs(dest_folder, exist_ok=True)
+
     for f in files:
         src = os.path.join(folder, f)
-        new_name = f"{movie_title} ({movie_year}){os.path.splitext(f)[1]}"
+        ext = os.path.splitext(f)[1]
+        new_name = f"{movie_title} ({movie_year}){ext}"
         dest = os.path.join(dest_folder, sanitize(new_name))
-        safe_move(src, dest)
 
-    if not DRY_RUN:
-        subprocess.run(["rm", "-rf", folder])
+        if DRY_RUN:
+            print(f"[DRY RUN] mv {src} -> {dest}")
+        else:
+            subprocess.run(["mv", src, dest], check=True)
+            print(f"🚀 Moved: {dest}")
+
+    # Remove original folder
+    if DRY_RUN:
+        print(f"[DRY_RUN] Would remove folder: {folder}")
     else:
-        print(f"[DRY RUN] Would remove original folder: {folder}")
+        subprocess.run(["rm", "-rf", folder])
 
-    print(f"🎬 Movie processed: {movie_title}")
     return True
 
+
 def process_tv_season(folder):
-    """Move all episodes in a season, flatten subfolders, then delete empty folders."""
     files_to_move = []
     for root, _, files in os.walk(folder):
         for f in files:
@@ -209,12 +220,12 @@ def process_tv_season(folder):
 
     show_name = sanitize(getattr(show, "name", title))
     season_folder = os.path.join(TV_DIR, show_name, f"Season {season:02d}")
-    if not DRY_RUN:
-        os.makedirs(season_folder, exist_ok=True)
-    else:
-        print(f"[DRY RUN] Would create folder: {season_folder}")
 
-    # Move/rename files
+    if DRY_RUN:
+        print(f"[DRY_RUN] Would create folder: {season_folder}")
+    else:
+        os.makedirs(season_folder, exist_ok=True)
+
     for src in files_to_move:
         ep_info = guessit(os.path.basename(src))
         ep_season = ep_info.get("season")
@@ -227,19 +238,21 @@ def process_tv_season(folder):
             new_name = f"{show_name} S{ep_season:02d}E{ep_episode:02d}{ext}"
 
         dest = os.path.join(season_folder, sanitize(new_name))
-        safe_move(src, dest)
 
-    # Delete empty subfolders
-    for root, dirs, _ in os.walk(folder, topdown=False):
-        for d in dirs:
-            full_path = os.path.join(root, d)
-            if os.path.exists(full_path):
-                if DRY_RUN:
-                    print(f"[DRY RUN] Would remove folder: {full_path}")
-                else:
-                    subprocess.run(["rm", "-rf", full_path])
+        if DRY_RUN:
+            print(f"[DRY_RUN] mv {src} -> {dest}")
+        else:
+            subprocess.run(["mv", src, dest], check=True)
+            print(f"🚀 Moved: {dest}")
+
+    # Remove original folder
+    if DRY_RUN:
+        print(f"[DRY_RUN] Would remove folder: {folder}")
+    else:
+        subprocess.run(["rm", "-rf", folder])
 
     return True
+
 
 def process_folder(folder):
     if already_processed(folder):
