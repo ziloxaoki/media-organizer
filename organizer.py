@@ -26,6 +26,8 @@ TRIGGER_TMM = os.getenv("TRIGGER_TMM", "true").lower() == "true"
 TMM_CONTAINER = os.getenv("TMM_CONTAINER", "tinymediamanager")
 
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov")
+SUBTITLE_EXTENSIONS = (".srt", ".sub", ".ass", ".ssa", ".vtt")
+
 EXCLUDED_DIRS = {"tmp", ".tmp", "incomplete", "featurettes", "extras", "bonus"}
 WINDOWS_ILLEGAL = r'[<>:"/\\|?*\n\r\t\uFF1A]'
 
@@ -69,6 +71,9 @@ cache = load_cache()
 def is_video(f):
     return f.lower().endswith(VIDEO_EXTENSIONS)
 
+def is_subtitle(f):
+    return f.lower().endswith(SUBTITLE_EXTENSIONS)
+
 def sanitize(name):
     name = re.sub(WINDOWS_ILLEGAL, "", str(name))
     name = name.replace(":", " -")
@@ -98,7 +103,6 @@ def find_best_match(results, title, year=None):
     return results[0]
 
 def safe_move(src, dst):
-    """Move a file or folder reliably, even across filesystems."""
     if DRY_RUN:
         print(f"[DRY RUN] Would move: {src} -> {dst}")
         return
@@ -137,7 +141,6 @@ def mark_processed(path):
         save_cache()
 
 def find_video_folder(root_folder):
-    """Return the folder that actually contains videos (the one with most video files)."""
     best_folder = None
     max_count = 0
     for dirpath, _, files in os.walk(root_folder):
@@ -146,6 +149,43 @@ def find_video_folder(root_folder):
             best_folder = dirpath
             max_count = count
     return best_folder
+
+def find_related_subtitles(folder, video_file):
+    """
+    Find subtitles matching a given video file.
+    Example:
+      Movie.Name.2024.mkv
+      Movie.Name.2024.en.srt
+      Movie.Name.2024.pt-BR.forced.srt
+    """
+    video_base = os.path.splitext(video_file)[0]
+    related = []
+
+    for f in os.listdir(folder):
+        if not is_subtitle(f):
+            continue
+
+        sub_base = os.path.splitext(f)[0]
+        if sub_base == video_base or sub_base.startswith(video_base + "."):
+            related.append(f)
+
+    return related
+
+def build_subtitle_name(video_new_name, subtitle_file):
+    """
+    Preserve subtitle suffix:
+      Movie (2024).en.srt
+      Movie (2024).pt-BR.forced.srt
+    """
+    video_base = os.path.splitext(video_new_name)[0]
+    sub_base, sub_ext = os.path.splitext(subtitle_file)
+
+    suffix = ""
+    parts = sub_base.split(".")
+    if len(parts) > 1:
+        suffix = "." + ".".join(parts[1:])
+
+    return f"{video_base}{suffix}{sub_ext}"
 
 # =========================
 # PROCESSING LOGIC
@@ -170,26 +210,22 @@ def process_movie(folder):
     movie_title = sanitize(getattr(movie, "title", title))
     movie_year = (getattr(movie, "release_date", "") or "")[:4] or "Unknown"
     dest_folder = os.path.join(MOVIES_DIR, f"{movie_title} ({movie_year})")
-
-    if DRY_RUN:
-        print(f"[DRY RUN] Would create folder: {dest_folder}")
-    else:
-        os.makedirs(dest_folder, exist_ok=True)
+    os.makedirs(dest_folder, exist_ok=True)
 
     for f in files:
         src = os.path.join(folder, f)
         ext = os.path.splitext(f)[1]
         new_name = f"{movie_title} ({movie_year}){ext}"
         dest = os.path.join(dest_folder, sanitize(new_name))
+        safe_move(src, dest)
 
-        if DRY_RUN:
-            print(f"[DRY RUN] mv {src} -> {dest}")
-        else:
-            subprocess.run(["mv", src, dest], check=True)
-            print(f"🚀 Moved: {dest}")
+        for sub in find_related_subtitles(folder, f):
+            sub_src = os.path.join(folder, sub)
+            sub_new_name = build_subtitle_name(new_name, sub)
+            sub_dest = os.path.join(dest_folder, sanitize(sub_new_name))
+            safe_move(sub_src, sub_dest)
 
     return True
-
 
 def process_tv_season(folder):
     files_to_move = []
@@ -214,152 +250,29 @@ def process_tv_season(folder):
 
     show_name = sanitize(getattr(show, "name", title))
     season_folder = os.path.join(TV_DIR, show_name, f"Season {season:02d}")
-
-    if DRY_RUN:
-        print(f"[DRY_RUN] Would create folder: {season_folder}")
-    else:
-        os.makedirs(season_folder, exist_ok=True)
+    os.makedirs(season_folder, exist_ok=True)
 
     for src in files_to_move:
-        ep_info = guessit(os.path.basename(src))
+        filename = os.path.basename(src)
+        src_folder = os.path.dirname(src)
+
+        ep_info = guessit(filename)
         ep_season = ep_info.get("season")
         ep_episode = ep_info.get("episode")
-        ext = os.path.splitext(src)[1]
+        ext = os.path.splitext(filename)[1]
 
         if ep_season is None or ep_episode is None:
-            new_name = os.path.basename(src)
+            new_name = filename
         else:
             new_name = f"{show_name} S{ep_season:02d}E{ep_episode:02d}{ext}"
 
         dest = os.path.join(season_folder, sanitize(new_name))
+        safe_move(src, dest)
 
-        if DRY_RUN:
-            print(f"[DRY_RUN] mv {src} -> {dest}")
-        else:
-            subprocess.run(["mv", src, dest], check=True)
-            print(f"🚀 Moved: {dest}")
+        for sub in find_related_subtitles(src_folder, filename):
+            sub_src = os.path.join(src_folder, sub)
+            sub_new_name = build_subtitle_name(new_name, sub)
+            sub_dest = os.path.join(season_folder, sanitize(sub_new_name))
+            safe_move(sub_src, sub_dest)
 
     return True
-
-
-def process_folder(folder):
-    if already_processed(folder):
-        print(f"⏭️ Skipping already processed: {folder}")
-        return False
-
-    name = os.path.basename(folder).lower()
-    if name in EXCLUDED_DIRS:
-        return False
-
-    subfolders = [d for d in os.listdir(folder) if os.path.isdir(os.path.join(folder, d))]
-    season_folders = [d for d in subfolders if is_valid_season_folder(d)]
-
-    moved = False
-    if season_folders:
-        for s in season_folders:
-            moved |= process_tv_season(os.path.join(folder, s))
-    else:
-        video_folder = find_video_folder(folder) or folder
-        files = [f for f in os.listdir(video_folder) if is_video(f)]
-        if not files:
-            return False
-
-        info = guessit(files[0])
-        if info.get("type") == "movie":
-            moved = process_movie(video_folder)
-        elif info.get("type") == "episode":
-            moved = process_tv_season(video_folder)
-
-    if moved:
-        mark_processed(folder)
-        if DRY_RUN:
-            print(f"[DRY RUN] Would remove folder: {folder}")  # top-level folder
-        else:
-            print(f"Remove folder: {folder}")  # top-level folder
-            subprocess.run(["rm", "-rf", folder])
-
-    return moved
-
-def scan_and_process():
-    moved_any = False
-
-    for d in os.listdir(INPUT_DIR):
-        path = os.path.join(INPUT_DIR, d)
-
-        if not os.path.isdir(path):
-            continue
-
-        if d.lower() in EXCLUDED_DIRS:
-            continue
-
-        if process_folder(path):
-            moved_any = True
-
-    return moved_any
-
-
-# =========================
-# CLI MODE
-# =========================
-
-def rename_file(path):
-    info = guessit(os.path.basename(path))
-    title = info.get("title")
-    if not title:
-        return
-
-    ext = os.path.splitext(path)[1]
-    if info.get("type") == "movie":
-        results = movie_api.search(title)
-        movie = find_best_match(results, title)
-        if not movie:
-            return
-        name = sanitize(getattr(movie, "title", title))
-        year = (getattr(movie, "release_date", "") or "")[:4] or "Unknown"
-        new_name = f"{name} ({year}){ext}"
-
-    elif info.get("type") == "episode":
-        season = info.get("season")
-        episode = info.get("episode")
-        results = tv_api.search(title)
-        show = find_best_match(results, title)
-        if not show:
-            return
-        name = sanitize(getattr(show, "name", title))
-        new_name = f"{name} S{season:02d}E{episode:02d}{ext}"
-    else:
-        return
-
-    dest = os.path.join(os.path.dirname(path), sanitize(new_name))
-    safe_move(path, dest)
-
-def process_cli(path):
-    for root, _, files in os.walk(path):
-        for f in files:
-            if is_video(f):
-                rename_file(os.path.join(root, f))
-    trigger_tmm()
-
-# =========================
-# MAIN
-# =========================
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--rename-only", action="store_true")
-    parser.add_argument("--path", default=None)
-    args = parser.parse_args()
-
-    if args.rename_only:
-        process_cli(args.path or INPUT_DIR)
-    else:
-        print("🟢 Media Organizer started")
-        while True:
-            print("🔄 Scanning...")
-            moved = scan_and_process()
-            if moved:
-                time.sleep(DEBOUNCE_SECONDS)
-                trigger_tmm()
-            else:
-                print("No changes")
-            time.sleep(SCAN_INTERVAL)
